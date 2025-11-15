@@ -57,14 +57,14 @@ https://grafana.com/api/dashboards/xxx/revisions/yyy/download
 https://raw.githubusercontent.com/.../dashboard.json
 ```
 
-Empty lines lines starting with `#` are ignored.
+Empty lines and lines starting with `#` are ignored.
 
 ### Logs example
 
 ```plain
-2025-11-15 17:35:23 [grafana-init]: Waiting 15 seconds for host.docker.internal:8080
-2025-11-15 17:35:23 [grafana-init]: host.docker.internal:8080 is available after 0s
-2025-11-15 17:35:23 [grafana-init]: Checking Grafana API
+2025-11-15 20:12:07 [grafana-init]: Reading password from /run/secrets/grafana_admin_password
+2025-11-15 20:12:07 [grafana-init]: Waiting for Grafana API at http://grafana:3000/grafana for 15 seconds
+2025-11-15 20:12:07 [grafana-init]: Grafana API is healthy
 2025-11-15 17:35:23 [grafana-init]: Scanning environment for GRAFANA_DASHBOARD_* variables
 2025-11-15 17:35:23 [grafana-init]: Processing GRAFANA_DASHBOARD_NODE_EXPORTER: https://grafana.com/api/dashboards/1860/revisions/42/download
 2025-11-15 17:35:24 [grafana-init]: Successfully downloaded to /tmp/grafana_dashboard_EFfiGI

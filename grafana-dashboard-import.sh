@@ -145,7 +145,7 @@ download_and_upload_json() {
     DOWNLOAD=$(mktemp /tmp/grafana_dashboard_XXXXXX)
 
     RESPONSE=$(
-        curl --fail --silent --show-error --insecure \
+        curl --fail --silent --show-error --insecure --location \
         --write-out "HTTPSTATUS:%{http_code}" \
         --output "$DOWNLOAD" "$URL"
     )
