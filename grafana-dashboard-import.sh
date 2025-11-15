@@ -28,77 +28,87 @@ set -e
 log() { echo "$(date +"%Y-%m-%d %H:%M:%S") [grafana-init]: $*"; }
 fail() { log "Error: $*" >&2 && exit 1; }
 
-# Wraps wait-for-it with logging.
-wait_for_grafana() {
-    log "Waiting $WAIT_FOR_IT_TIMEOUT seconds for $GRAFANA_ADDR"
-    START=$(date +%s)
-
-    if ! wait-for-it -q -s -t "$WAIT_FOR_IT_TIMEOUT" -w "$GRAFANA_ADDR" ; then
-        fail "timeout occured after waiting for $WAIT_FOR_IT_TIMEOUT seconds"
-    else
-        END="$(date +%s)"
-        log "$GRAFANA_ADDR is available after $(( END-START ))s"
-    fi
-}
-
 # Check provided URL is Grafana API, not web interface (in case of misconfigured
 # subpath) and what Grafana is healthy.
 check_grafana() {
-    URL="$1/api/health"
+    URL="$GRAFANA_URL/api/health"
+    START_TS=$(date +%s)
+    log "Waiting for Grafana API at $GRAFANA_URL for $GRAFANA_WAIT_TIMEOUT seconds"
 
-    log "Checking Grafana API"
-    RESPONSE=$(
-        curl --fail --silent --show-error --insecure --location \
-            --write-out "HTTPSTATUS:%{http_code}" "$URL"
-    )
+    while true; do
+        RESPONSE=$(
+            curl --fail --silent --show-error --insecure \
+                --write-out "HTTPSTATUS:%{http_code}" "$URL"
+        )
 
-    # Parse status code. Expected only 200.
-    RC=$?
-    HTTP_BODY=$(printf "%s" "$RESPONSE" | sed -e 's/HTTPSTATUS:.*//')
-    HTTP_CODE=$(printf "%s" "$RESPONSE" | sed -ne 's/.*HTTPSTATUS://p')
+        # Parse status code. Expected only 200.
+        RC=$?
+        HTTP_BODY=$(printf "%s" "$RESPONSE" | sed -e 's/HTTPSTATUS:.*//')
+        HTTP_CODE=$(printf "%s" "$RESPONSE" | sed -ne 's/.*HTTPSTATUS://p')
 
-    if [ "$RC" -ne 0 ]; then
-        fail "curl transport failure: $RC"
-    else
-        case "$HTTP_CODE" in
-            200)
-                ;;
-            *)
-                fail "unexpected HTTP status code $HTTP_CODE"
-                ;;
-        esac
-    fi
+        if [ "$RC" -ne 0 ]; then
+            fail "curl transport failure: $RC"
+        else
+            # May be HTML instead of JSON.
+            if [ "$HTTP_CODE" = "200" ]; then
+                if printf "%s" "$HTTP_BODY" | grep -qi '<html>'; then
+                    fail "misconfigured subpath: got HTML instead of API JSON"
+                fi
 
-    if printf "%s" "$HTTP_BODY" | grep -qi '<html>'; then
-        fail "misconfigured subpath: this is HTML, not Grafana API JSON"
-    fi
+                # Healthcheck passed.
+                if printf "%s" "$HTTP_BODY" | grep -q '"database"[[:space:]]*:[[:space:]]*"ok"'; then
+                    log "Grafana API is healthy"
+                    return 0
+                fi
+            fi
+        fi
 
-    if ! printf "%s" "$HTTP_BODY" | grep -q '"database"[[:space:]]*:[[:space:]]*"ok"'; then
-        fail "Grafana is not healthy"
-    fi
+        # Not yet ready - check timeout.
+        elapsed=$(( $(date +%s)-START_TS ))
+        if [ "$elapsed" -ge "$GRAFANA_WAIT_TIMEOUT" ]; then
+            fail "Grafana API not ready after $GRAFANA_WAIT_TIMEOUT seconds"
+        fi
+
+        sleep 1
+    done
+}
+
+# Theoretically, this should normalize all exports and grafana.com downloads
+# since ancient versions. Guess who never tested.
+normalize_json() {
+    IN=$1
+    OUT=$(mktemp /tmp/grafana_normalized_XXXXXX)
+
+    jq '
+        # Get dashboard from wrapper if it exists
+        (.dashboard // .)
+        # Delete some conflicting API fields
+        | del(.meta, .gnetId, .revision)
+        # ID should be null to support creation, not only updating
+        | (.id = null)
+        # Final modern payload
+        | { dashboard: ., overwrite: true, folderId: (env.GRAFANA_FOLDER_ID // 0 | tonumber) }
+    ' "$IN" > "$OUT"
+
+    mv -f "$OUT" "$IN"
 }
 
 # Uploads JSON from disk.
 upload_json() {
     JSONFILE="$1"
-    log "Uploading $JSONFILE"
+    URL="$GRAFANA_URL/api/dashboards/db"
 
-    # Wrap dashboard JSON to overwrite it.
-    BODYFILE=$(mktemp /tmp/grafana_body_XXXXXX)
-    {
-        printf '{"dashboard": '
-        cat "$JSONFILE"
-        printf ', "overwrite": true}'
-    } >"$BODYFILE"
+    log "Uploading $JSONFILE"
+    normalize_json "$JSONFILE"
 
     # Writes to STDOUT received text and status code.
     RESPONSE=$(
-        curl --fail --silent --show-error --insecure --location \
+        curl --fail --silent --show-error --insecure \
             --write-out "HTTPSTATUS:%{http_code}" \
             --user "$GRAFANA_USER:$GRAFANA_PASS" \
             --header "Content-Type: application/json" \
-            --request POST "$GRAFANA_URL/api/dashboards/db" \
-            --data @"$BODYFILE"
+            --request POST "$URL" \
+            --data @"$JSONFILE"
     )
 
     # Save exit code, received text and status code.
@@ -127,8 +137,6 @@ upload_json() {
                 ;;
         esac
     fi
-
-    rm -f "$BODYFILE"
 }
 
 # Downloads JSON from network and uploads to Grafana.
@@ -137,7 +145,7 @@ download_and_upload_json() {
     DOWNLOAD=$(mktemp /tmp/grafana_dashboard_XXXXXX)
 
     RESPONSE=$(
-        curl --fail --silent --show-error --insecure --location \
+        curl --fail --silent --show-error --insecure \
         --write-out "HTTPSTATUS:%{http_code}" \
         --output "$DOWNLOAD" "$URL"
     )
@@ -223,9 +231,8 @@ process_from_env() {
     done
 }
 
-# Extract only host:port for wait-for-it.
-URL_NO_PROTO=${GRAFANA_URL#*://}
-GRAFANA_ADDR=${URL_NO_PROTO%%/*}
+# Remove trailing slash to avoid redirections.
+GRAFANA_URL="${GRAFANA_URL%/}"
 
 # Read secret if provided.
 if [ -n "$GRAFANA_PASS_FILE" ] ; then
@@ -238,8 +245,7 @@ if [ -n "$GRAFANA_PASS_FILE" ] ; then
     GRAFANA_PASS=$(head -n1 "$GRAFANA_PASS_FILE")
 fi
 
-wait_for_grafana
-check_grafana "$GRAFANA_URL"
+check_grafana
 process_from_env
 process_text_files
 process_json_files

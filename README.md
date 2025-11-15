@@ -2,6 +2,8 @@
 
 Small, standalone Alpine-based helper container for automatic provisioning of Grafana dashboards via API, without bind-mounts and without modifying Grafana image — just drop it into any Docker Compose or Swarm stack.
 
+**NOTE:** Works only modern Grafana 7-12+.
+
 ## Features
 
 - As uploaded via API, dashboards are editable and deletable.
@@ -9,7 +11,7 @@ Small, standalone Alpine-based helper container for automatic provisioning of Gr
 - Supports "link files" (`*.txt`) containing one URL per line.
 - Idempotent: dashboards are overwritten only if needed.
 - Requires only Grafana username/password (basic auth).
-- Tiny footprint: one BusyBox shell script and curl
+- Tiny footprint: one BusyBox shell script utilizing `curl` and `jq`.
 
 ## Environment variables
 
@@ -19,9 +21,10 @@ Small, standalone Alpine-based helper container for automatic provisioning of Gr
 | `GRAFANA_USER` | `admin` | Username for Grafana API |
 | `GRAFANA_PASS` | `admin` | Password for Grafana API |
 | `GRAFANA_PASS_FILE` | | File to read password from, overwrites `GRAFANA_PASS` |
+| `GRAFANA_FOLDER_ID` | `0` | Grafana dashboard folder number |
 | `DASHBOARD_DIR` | `/dashboards` | Directory to scan for `*.json` / `*.txt` |
-| `WAIT_FOR_IT_TIMEOUT` | `15` | Seconds to wait until `$GRAFANA_URL` will be available |
-| `GRAFANA_DASHBOARD_*` | | URL of dashboard(s) |
+| `GRAFANA_WAIT_TIMEOUT` | `15` | Seconds to wait until Grafana will be able to receive requests |
+| `GRAFANA_DASHBOARD_*` | | URL(s) of dashboard(s) |
 
 ### Dashboard URLs via envvars
 
@@ -54,7 +57,7 @@ https://grafana.com/api/dashboards/xxx/revisions/yyy/download
 https://raw.githubusercontent.com/.../dashboard.json
 ```
 
-Empty lines and `# comments` are ignored.
+Empty lines lines starting with `#` are ignored.
 
 ### Logs example
 
@@ -80,11 +83,12 @@ Empty lines and `# comments` are ignored.
 
 `grafana-init` terminates the container with `exit 0` only when Grafana API is reachable and healthy and all dashboards are imported successfully. Otherwise it logs the error and exits non-zero. This is appropriate for init containers in Compose or Kubernetes.
 
-### Common pitfalls the script protects against
+### Common pitfalls
 
 - Wrong Grafana URL.
 - Wrong credentials.
-- Bad subpath (`/grafana` without proper Grafana config e.g. `GF_SERVER_ROOT_URL`).
+- Bad subpath (`/grafana` without proper Grafana config e.g. `GF_SERVER_ROOT_URL=http://grafana:8080/monitoring/`).
+- Any other reason Grafana will try to send redirects (this may cause `curl` to connect to `localhost:8080`).
 - Traefik/nginx serving HTML instead of Grafana API.
 - Network failures or HTTPS issues.
 

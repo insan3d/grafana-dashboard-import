@@ -1,30 +1,27 @@
 ARG ALPINE_TAG="3.22.2"
-ARG WAIT_FOR_IT_RELEASE="https://github.com/roerohan/wait-for-it/releases/download/v0.2.14/wait-for-it"
 
 FROM alpine:${ALPINE_TAG} AS grafana-init
 
 ARG ALPINE_TAG
-ARG WAIT_FOR_IT_RELEASE
 
-ENV GRAFANA_URL="http://grafana:3000" \
-    GRAFANA_USER="admin" \
+ENV DASHBOARD_DIR="/dashboards" \
+    GRAFANA_FOLDER_ID="0" \
     GRAFANA_PASS="admin" \
-    DASHBOARD_DIR="/dashboards" \
-    WAIT_FOR_IT_TIMEOUT="15"
-
-# hadolint ignore=DL3020
-ADD "${WAIT_FOR_IT_RELEASE}" /usr/local/bin/wait-for-it
+    GRAFANA_URL="http://grafana:3000" \
+    GRAFANA_USER="admin" \
+    GRAFANA_WAIT_TIMEOUT="15"
 
 # hadolint ignore=DL3018
 RUN --mount=type=cache,id=apk_cache_${ALPINE_TAG},target=/var/cache/apk,sharing=locked \
     apk add ca-certificates \
             curl \
+            jq \
  \
- && chmod -v +x /usr/local/bin/wait-for-it \
  && mkdir -pv /dashboards
 
-COPY ./dashboards/* /dashboards/
 COPY ./grafana-dashboard-import.sh /usr/local/bin/grafana-dashboard-import
+
+VOLUME [ "/dashboards" ]
 
 CMD [ "grafana-dashboard-import" ]
 
